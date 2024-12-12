@@ -1,18 +1,19 @@
+from sqlite3 import Cursor
 from __init__ import CURSOR, CONN
-from department import Department
-from employee import Employee
-
 
 class Review:
-
     # Dictionary of objects saved to the database.
     all = {}
 
     def __init__(self, year, summary, employee_id, id=None):
+        if not isinstance(year, int) or year < 2000:
+            raise ValueError("Year must be an integer and >= 2000.")
+        if not summary or len(summary.strip()) == 0:
+            raise ValueError("Summary cannot be empty.")
         self.id = id
         self.year = year
         self.summary = summary
-        self.employee_id = employee_id
+        self.employee_id = employee_id  # Use the setter to validate
 
     def __repr__(self):
         return (
@@ -20,9 +21,24 @@ class Review:
             + f"Employee: {self.employee_id}>"
         )
 
+    @property
+    def employee_id(self):
+        return self._employee_id
+
+    @employee_id.setter
+    def employee_id(self, value):
+        """Validate that the employee_id exists in the database."""
+        sql = "SELECT id FROM employees WHERE id = ?"
+        if not CURSOR.execute(sql, (value,)).fetchone():
+            raise ValueError(f"Employee ID {value} does not exist.")
+        self._employee_id = value
+
+    # Other methods remain unchanged...
+
+
     @classmethod
     def create_table(cls):
-        """ Create a new table to persist the attributes of Review instances """
+        """Create the `reviews` table to persist Review instances."""
         sql = """
             CREATE TABLE IF NOT EXISTS reviews (
             id INTEGER PRIMARY KEY,
@@ -36,47 +52,83 @@ class Review:
 
     @classmethod
     def drop_table(cls):
-        """ Drop the table that persists Review  instances """
-        sql = """
-            DROP TABLE IF EXISTS reviews;
-        """
+        """Drop the `reviews` table."""
+        sql = "DROP TABLE IF EXISTS reviews;"
         CURSOR.execute(sql)
         CONN.commit()
 
     def save(self):
-        """ Insert a new row with the year, summary, and employee id values of the current Review object.
-        Update object id attribute using the primary key value of new row.
-        Save the object in local dictionary using table row's PK as dictionary key"""
-        pass
+        """
+        Persist the current Review object to the database.
+        - Inserts a new row into the `reviews` table.
+        - Updates the object's `id` attribute with the primary key of the new row.
+        - Adds the object to the class-level dictionary `all`.
+        """
+        sql = "INSERT INTO reviews(year, summary, employee_id) VALUES (?, ?, ?)"
+        CURSOR.execute(sql, (self.year, self.summary, self.employee_id))
+        self.id = CURSOR.lastrowid
+        type(self).all[self.id] = self
+        CONN.commit()
 
     @classmethod
     def create(cls, year, summary, employee_id):
-        """ Initialize a new Review instance and save the object to the database. Return the new instance. """
-        pass
-   
+        """
+        Create a new Review instance and save it to the database.
+        Return the new instance.
+        """
+        review = cls(year, summary, employee_id)
+        review.save()
+        return review
+
     @classmethod
     def instance_from_db(cls, row):
-        """Return an Review instance having the attribute values from the table row."""
-        # Check the dictionary for  existing instance using the row's primary key
-        pass
-   
+        """
+        Create or update a Review instance from a database row.
+        - If an instance with the same ID exists in `all`, update it.
+        - Otherwise, create a new instance.
+        """
+        review = cls.all.get(row[0])
+
+        if review:
+            review.year = row[1]
+            review.summary = row[2]
+            review.employee_id = row[3]
+        else:
+            review = cls(row[1], row[2], row[3])
+            review.id = row[0]
+            cls.all[review.id] = review
+
+        return review
 
     @classmethod
     def find_by_id(cls, id):
-        """Return a Review instance having the attribute values from the table row."""
-        pass
+        """Find and return a Review instance by its ID."""
+        sql = "SELECT * FROM reviews WHERE id = ?"
+        row = CURSOR.execute(sql, (id,)).fetchone()
+        return cls.instance_from_db(row) if row else None
 
     def update(self):
-        """Update the table row corresponding to the current Review instance."""
-        pass
+        """Update the database row corresponding to this Review instance."""
+        sql = "UPDATE reviews SET year = ?, summary = ?, employee_id = ? WHERE id = ?"
+        CURSOR.execute(sql, (self.year, self.summary, self.employee_id, self.id))
+        CONN.commit()
 
     def delete(self):
-        """Delete the table row corresponding to the current Review instance,
-        delete the dictionary entry, and reassign id attribute"""
-        pass
+        """
+        Delete this Review instance from the database and the class-level dictionary.
+        Reset the `id` attribute to `None`.
+        """
+        sql = "DELETE FROM reviews WHERE id = ?"
+        CURSOR.execute(sql, (self.id,))
+        CONN.commit()
+        del type(self).all[self.id]
+        self.id = None
 
     @classmethod
     def get_all(cls):
-        """Return a list containing one Review instance per table row"""
-        pass
-
+        """
+        Retrieve all rows from the `reviews` table and return a list of Review instances.
+        """
+        sql = "SELECT * FROM reviews"
+        rows = CURSOR.execute(sql).fetchall()
+        return [cls.instance_from_db(row) for row in rows]
